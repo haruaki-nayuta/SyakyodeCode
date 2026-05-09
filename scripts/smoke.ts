@@ -51,6 +51,7 @@ async function testLLM() {
   assert(out.length > 0, 'snippet not empty');
   assert(!out.includes('```'), 'no fences');
   assert(!out.includes('\t'), 'no tabs');
+  assert(!out.endsWith('\n'), 'no trailing newline');
 }
 
 (async () => {
