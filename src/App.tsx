@@ -29,7 +29,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (mode === 'typing' && completed) {
-      setInfo('完了です ✓  Enterで次の問題、もしくはEscでこのまま戻れます');
+      setInfo('完了です ✓  Enterでホームに戻る');
     }
   }, [mode, completed]);
 
@@ -194,8 +194,9 @@ export const App: React.FC = () => {
           )}
           <Box marginTop={1}>
             <Text color="gray">
-              Esc: お題入力に戻る / Backspace: 1文字戻る / Enter: 改行
-              {completed ? ' / Enter: 次の問題へ' : ''}
+              {completed
+                ? 'Enter: ホームに戻る / Esc: ホームに戻る'
+                : 'Esc: ホームに戻る / Backspace: 1文字戻る / Enter: 改行'}
             </Text>
           </Box>
         </Box>
@@ -210,7 +211,7 @@ export const App: React.FC = () => {
 
 const Header: React.FC<{ model: string; mode: Mode }> = ({ model, mode }) => {
   const label =
-    mode === 'input' ? 'PROMPT' : mode === 'loading' ? 'GENERATING' : 'TYPING';
+    mode === 'input' ? 'HOME' : mode === 'loading' ? 'GENERATING' : 'TYPING';
   const color = mode === 'input' ? 'cyan' : mode === 'loading' ? 'yellow' : 'magenta';
   return (
     <Box>

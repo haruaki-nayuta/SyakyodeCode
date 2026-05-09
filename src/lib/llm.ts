@@ -55,7 +55,7 @@ function sanitize(raw: string): string {
   text = text.replace(/[ \t]+$/gm, '');
   text = text.replace(/\n{3,}/g, '\n\n');
 
-  return text.trim() + '\n';
+  return text.trim();
 }
 
 export function getModelInfo() {
