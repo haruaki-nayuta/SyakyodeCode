@@ -21,16 +21,22 @@ const SYSTEM_PROMPT = `あなたは「写経 (programming transcription practice
 
 export interface GenerateOptions {
   prompt: string;
+  language?: string;
   signal?: AbortSignal;
 }
 
-export async function generateSnippet({ prompt, signal }: GenerateOptions): Promise<string> {
+export async function generateSnippet({ prompt, language, signal }: GenerateOptions): Promise<string> {
+  const userContent =
+    language && language !== 'auto'
+      ? `使用言語: ${language}\nお題: ${prompt}\n\n上記の言語で写経用コードを出力してください。`
+      : prompt;
+
   const response = await client.chat.completions.create(
     {
       model: DEFAULT_MODEL,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: prompt },
+        { role: 'user', content: userContent },
       ],
       temperature: 0.4,
       max_tokens: 800,

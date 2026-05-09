@@ -3,6 +3,7 @@ import { Box, Text, useApp, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import { PromptInput } from './components/PromptInput.js';
 import { TypingView } from './components/TypingView.js';
+import { LanguagePicker, getLanguageLabel } from './components/LanguagePicker.js';
 import {
   TypingState,
   backspace,
@@ -12,8 +13,39 @@ import {
   typeChar,
 } from './typing/state.js';
 import { generateSnippet, getModelInfo } from './lib/llm.js';
+import { loadSettings, saveSettings } from './lib/settings.js';
 
-type Mode = 'input' | 'loading' | 'typing';
+type Mode = 'input' | 'loading' | 'typing' | 'language-picker';
+
+interface SlashCommand {
+  name: string;
+  aliases?: string[];
+  description: string;
+}
+
+interface SlashCommandMatch {
+  command: SlashCommand;
+  displayName: string;
+}
+
+const COMMANDS: SlashCommand[] = [
+  { name: '/language', description: 'プログラミング言語を設定する' },
+  { name: '/quit', aliases: ['/exit'], description: '終了する' },
+];
+
+function filterCommands(input: string): SlashCommandMatch[] {
+  const q = input.trim().toLowerCase();
+  if (!q.startsWith('/')) return [];
+  const results: SlashCommandMatch[] = [];
+  for (const cmd of COMMANDS) {
+    const names = [cmd.name, ...(cmd.aliases ?? [])];
+    const matched = names.find((n) => n.toLowerCase().startsWith(q));
+    if (matched) {
+      results.push({ command: cmd, displayName: matched });
+    }
+  }
+  return results;
+}
 
 export const App: React.FC = () => {
   const { exit } = useApp();
@@ -22,6 +54,7 @@ export const App: React.FC = () => {
   const [typing, setTyping] = useState<TypingState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [language, setLanguage] = useState<string>(() => loadSettings().language ?? 'auto');
   const abortRef = useRef<AbortController | null>(null);
   const modelInfo = useMemo(() => getModelInfo(), []);
 
@@ -40,7 +73,7 @@ export const App: React.FC = () => {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const snippet = await generateSnippet({ prompt, signal: ctrl.signal });
+      const snippet = await generateSnippet({ prompt, language, signal: ctrl.signal });
       if (!snippet || snippet.trim().length === 0) {
         throw new Error('LLMからの出力が空でした');
       }
@@ -63,6 +96,10 @@ export const App: React.FC = () => {
     (input, key) => {
       if (key.ctrl && (input === 'c' || input === 'd')) {
         exit();
+        return;
+      }
+
+      if (mode === 'language-picker') {
         return;
       }
 
@@ -137,7 +174,7 @@ export const App: React.FC = () => {
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Header model={modelInfo.model} mode={mode} />
+      <Header model={modelInfo.model} mode={mode} language={language} />
 
       {mode === 'input' && (
         <Box flexDirection="column" marginTop={1}>
@@ -150,19 +187,61 @@ export const App: React.FC = () => {
               onSubmit={(v) => {
                 const trimmed = v.trim();
                 if (!trimmed) return;
+                if (trimmed.startsWith('/')) {
+                  const top = filterCommands(trimmed)[0];
+                  if (!top) return;
+                  setError(null);
+                  setInfo(null);
+                  setPromptValue('');
+                  if (top.command.name === '/language') {
+                    setMode('language-picker');
+                  } else if (top.command.name === '/quit') {
+                    exit();
+                  }
+                  return;
+                }
                 void startGeneration(trimmed);
               }}
               placeholder="お題を入力してEnter..."
             />
           </Box>
+          {promptValue.startsWith('/') && (
+            <SlashCommandPalette query={promptValue} />
+          )}
           {typing && (
             <Text color="gray">Esc: 写経画面に戻る</Text>
+          )}
+          <Box>
+            <Text color="gray">言語: </Text>
+            <Text color={language === 'auto' ? 'gray' : 'green'} bold>
+              {language === 'auto' ? '未設定' : getLanguageLabel(language)}
+            </Text>
+          </Box>
+          {info && (
+            <Box marginTop={1}>
+              <Text color="green">{info}</Text>
+            </Box>
           )}
           {error && (
             <Box marginTop={1}>
               <Text color="red">エラー: {error}</Text>
             </Box>
           )}
+        </Box>
+      )}
+
+      {mode === 'language-picker' && (
+        <Box marginTop={1}>
+          <LanguagePicker
+            current={language}
+            onSelect={(id) => {
+              setLanguage(id);
+              saveSettings({ ...loadSettings(), language: id });
+              setMode('input');
+              setInfo(`言語を ${getLanguageLabel(id)} に設定しました`);
+            }}
+            onCancel={() => setMode('input')}
+          />
         </Box>
       )}
 
@@ -203,16 +282,33 @@ export const App: React.FC = () => {
       )}
 
       <Box marginTop={1}>
-        <Text color="gray" dimColor>Ctrl+C で終了 · LM Studio: {modelInfo.baseURL}</Text>
+        <Text color="gray" dimColor>LM Studio: {modelInfo.baseURL}</Text>
       </Box>
     </Box>
   );
 };
 
-const Header: React.FC<{ model: string; mode: Mode }> = ({ model, mode }) => {
+const Header: React.FC<{ model: string; mode: Mode; language: string }> = ({
+  model,
+  mode,
+  language,
+}) => {
   const label =
-    mode === 'input' ? 'HOME' : mode === 'loading' ? 'GENERATING' : 'TYPING';
-  const color = mode === 'input' ? 'cyan' : mode === 'loading' ? 'yellow' : 'magenta';
+    mode === 'input'
+      ? 'HOME'
+      : mode === 'loading'
+        ? 'GENERATING'
+        : mode === 'language-picker'
+          ? 'LANGUAGE'
+          : 'TYPING';
+  const color =
+    mode === 'input'
+      ? 'cyan'
+      : mode === 'loading'
+        ? 'yellow'
+        : mode === 'language-picker'
+          ? 'cyan'
+          : 'magenta';
   return (
     <Box>
       <Text bold color={color}>SyakyodeCode</Text>
@@ -220,6 +316,41 @@ const Header: React.FC<{ model: string; mode: Mode }> = ({ model, mode }) => {
       <Text color={color}>[{label}]</Text>
       <Text color="gray"> · model: </Text>
       <Text>{model}</Text>
+      <Text color="gray"> · lang: </Text>
+      <Text color={language === 'auto' ? 'gray' : 'green'}>
+        {getLanguageLabel(language)}
+      </Text>
+    </Box>
+  );
+};
+
+const SlashCommandPalette: React.FC<{ query: string }> = ({ query }) => {
+  const matches = filterCommands(query);
+  if (matches.length === 0) {
+    return (
+      <Box marginTop={0}>
+        <Text color="gray" dimColor>該当するコマンドがありません</Text>
+      </Box>
+    );
+  }
+  return (
+    <Box flexDirection="column" marginTop={0}>
+      {matches.map((m, i) => {
+        const isAlias = m.displayName !== m.command.name;
+        return (
+          <Box key={`${m.command.name}:${m.displayName}`}>
+            <Text color={i === 0 ? 'cyan' : 'gray'} bold={i === 0}>
+              {i === 0 ? '▶ ' : '  '}
+              {m.displayName}
+            </Text>
+            <Text color="gray">
+              {'  '}
+              {m.command.description}
+              {isAlias ? ` (${m.command.name} のエイリアス)` : ''}
+            </Text>
+          </Box>
+        );
+      })}
     </Box>
   );
 };
