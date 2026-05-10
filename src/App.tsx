@@ -17,7 +17,7 @@ import {
   progress,
   typeChar,
 } from './typing/state.js';
-import { generateSnippet, getModelInfo } from './lib/llm.js';
+import { chatAboutSnippet, generateSnippet, getModelInfo, SnippetChatMessage } from './lib/llm.js';
 import { loadSettings, saveSettings } from './lib/settings.js';
 import { Provider, findProvider, getDefaultProvider } from './lib/providers.js';
 import { getApiKey, setApiKey } from './lib/auth.js';
@@ -89,6 +89,12 @@ export const App: React.FC = () => {
   );
   const [explanationText, setExplanationText] = useState<string | null>(null);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
+  const [chatHistory, setChatHistory] = useState<SnippetChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatActive, setChatActive] = useState(false);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+  const chatAbortRef = useRef<AbortController | null>(null);
 
   const setAuto = (next: boolean) => {
     setAutoState(next);
@@ -177,6 +183,13 @@ export const App: React.FC = () => {
       setExplanationText(explanation ? result.explanation : null);
       if (prompt) setLastPrompt(prompt);
       setPromptValue('');
+      chatAbortRef.current?.abort();
+      chatAbortRef.current = null;
+      setChatHistory([]);
+      setChatInput('');
+      setChatActive(false);
+      setChatLoading(false);
+      setChatError(null);
       setMode('typing');
     } catch (e: any) {
       if (e?.name === 'AbortError') {
@@ -195,10 +208,54 @@ export const App: React.FC = () => {
     saveSettings(next);
   };
 
+  const submitChat = async (raw: string) => {
+    const question = raw.trim();
+    if (!question || !typing || chatLoading) return;
+    const code = typing.target;
+    const historyForCall = chatHistory;
+    setChatError(null);
+    setChatInput('');
+    setChatHistory((h) => [...h, { role: 'user', content: question }]);
+    setChatLoading(true);
+    const ctrl = new AbortController();
+    chatAbortRef.current = ctrl;
+    try {
+      const reply = await chatAboutSnippet({
+        code,
+        explanation: explanationText,
+        language,
+        prompt: lastPrompt,
+        history: historyForCall,
+        question,
+        signal: ctrl.signal,
+      });
+      setChatHistory((h) => [...h, { role: 'assistant', content: reply }]);
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') {
+        setChatError(e?.message ?? String(e));
+      }
+    } finally {
+      if (chatAbortRef.current === ctrl) chatAbortRef.current = null;
+      setChatLoading(false);
+    }
+  };
+
   useInput(
     (input, key) => {
       if (key.ctrl && (input === 'c' || input === 'd')) {
         exit();
+        return;
+      }
+
+      if (chatActive) {
+        if (key.escape) {
+          chatAbortRef.current?.abort();
+          chatAbortRef.current = null;
+          setChatActive(false);
+          setChatInput('');
+          setChatLoading(false);
+          setChatError(null);
+        }
         return;
       }
 
@@ -259,6 +316,11 @@ export const App: React.FC = () => {
       if (!typing) return;
 
       if (completed) {
+        if (input === 'c' && !key.ctrl && !key.meta) {
+          setChatActive(true);
+          setChatError(null);
+          return;
+        }
         if (key.return) {
           if (auto && lastPrompt && typing) {
             const previousCode = typing.target;
@@ -547,6 +609,17 @@ export const App: React.FC = () => {
               <Text>{explanationText}</Text>
             </Box>
           )}
+          {completed && (
+            <ChatPanel
+              history={chatHistory}
+              input={chatInput}
+              onInputChange={setChatInput}
+              onSubmit={submitChat}
+              active={chatActive}
+              loading={chatLoading}
+              error={chatError}
+            />
+          )}
           {info && (
             <Box marginTop={1}>
               <Text color="green">{info}</Text>
@@ -555,9 +628,11 @@ export const App: React.FC = () => {
           <Box marginTop={1}>
             <Text color="gray">
               {completed
-                ? auto
-                  ? 'Enter: 関連する次のお題を生成 / Esc: ホームに戻る'
-                  : 'Enter: ホームに戻る / Esc: ホームに戻る'
+                ? chatActive
+                  ? 'Enter: 質問を送信 / Esc: 質問入力を閉じる'
+                  : auto
+                    ? 'Enter: 関連する次のお題を生成 / c: 質問する / Esc: ホームに戻る'
+                    : 'Enter: ホームに戻る / c: 質問する / Esc: ホームに戻る'
                 : 'Esc: ホームに戻る / Backspace: 1文字戻る / Enter: 改行'}
             </Text>
           </Box>
@@ -673,6 +748,65 @@ const SlashCommandPalette: React.FC<{ query: string; selectedIndex: number }> = 
           </Box>
         );
       })}
+    </Box>
+  );
+};
+
+const ChatPanel: React.FC<{
+  history: SnippetChatMessage[];
+  input: string;
+  onInputChange: (v: string) => void;
+  onSubmit: (v: string) => void;
+  active: boolean;
+  loading: boolean;
+  error: string | null;
+}> = ({ history, input, onInputChange, onSubmit, active, loading, error }) => {
+  return (
+    <Box
+      borderStyle="round"
+      borderColor={active ? 'cyan' : 'gray'}
+      paddingX={1}
+      flexDirection="column"
+      marginTop={1}
+    >
+      <Text color={active ? 'cyan' : 'gray'} bold>
+        対話 (LLMにこのコード・解説について質問する)
+      </Text>
+      {history.length === 0 && !loading && (
+        <Text color="gray" dimColor>
+          まだ質問はありません。
+        </Text>
+      )}
+      {history.map((m, i) => (
+        <Box key={i} flexDirection="column" marginTop={1}>
+          <Text color={m.role === 'user' ? 'cyan' : 'magenta'} bold>
+            {m.role === 'user' ? 'あなた' : 'アシスタント'}
+          </Text>
+          <Text>{m.content}</Text>
+        </Box>
+      ))}
+      {loading && (
+        <Box marginTop={1}>
+          <Text color="yellow">
+            <Spinner type="dots" />
+          </Text>
+          <Text color="gray"> 回答を生成中... (Escでキャンセル)</Text>
+        </Box>
+      )}
+      {error && (
+        <Box marginTop={1}>
+          <Text color="red">エラー: {error}</Text>
+        </Box>
+      )}
+      <Box marginTop={1}>
+        <PromptInput
+          value={input}
+          onChange={onInputChange}
+          onSubmit={onSubmit}
+          placeholder={active ? 'コードや解説について質問...' : 'c キーで質問入力を有効化'}
+          disabled={!active || loading}
+        />
+      </Box>
     </Box>
   );
 };
