@@ -33,10 +33,44 @@ function splitLines(target: string): LineRow[] {
   return lines;
 }
 
-function colorFor(mark: Mark): string | undefined {
-  if (mark === 'correct') return 'green';
-  if (mark === 'incorrect') return 'red';
-  return 'gray';
+const ESC = '\x1b';
+const RESET = `${ESC}[0m`;
+const BOLD = `${ESC}[1m`;
+const FG_GREEN = `${ESC}[32m`;
+const FG_RED = `${ESC}[31m`;
+const FG_GRAY = `${ESC}[90m`;
+const BG_GRAY = `${ESC}[100m`;
+const CURSOR = `${BG_GRAY}${ESC}[39m`;
+
+function styleChar(char: string, mark: Mark, isCursor: boolean): string {
+  if (isCursor) {
+    return `${CURSOR}${char}${RESET}`;
+  }
+  if (mark === 'correct') {
+    return `${FG_GREEN}${char}${RESET}`;
+  }
+  if (mark === 'incorrect') {
+    return `${BOLD}${FG_RED}${char}${RESET}`;
+  }
+  return `${FG_GRAY}${char}${RESET}`;
+}
+
+function buildLineString(
+  line: LineRow,
+  state: TypingState,
+  active: boolean,
+  appendCursorBlock: boolean,
+): string {
+  let out = '';
+  for (const cell of line.cells) {
+    const mark = state.marks[cell.idx];
+    const isCursor = active && state.cursor === cell.idx;
+    out += styleChar(cell.char, mark, isCursor);
+  }
+  if (appendCursorBlock) {
+    out += `${BG_GRAY} ${RESET}`;
+  }
+  return out;
 }
 
 export const TypingView: React.FC<Props> = ({ state, active }) => {
@@ -49,31 +83,12 @@ export const TypingView: React.FC<Props> = ({ state, active }) => {
         const isCursorOnNewline = line.newlineIdx !== null && state.cursor === line.newlineIdx;
         const isFinalLine = lineIdx === lines.length - 1;
         const isCursorAtEnd = isFinalLine && finalCursor;
+        const appendCursorBlock = active && (isCursorOnNewline || isCursorAtEnd);
+
+        const content = buildLineString(line, state, active, appendCursorBlock);
 
         return (
-          <Text key={lineIdx}>
-            {line.cells.map((cell) => {
-              const mark = state.marks[cell.idx];
-              const isCursor = active && state.cursor === cell.idx;
-              const display = cell.char;
-              return (
-                <Text
-                  key={cell.idx}
-                  color={colorFor(mark)}
-                  inverse={isCursor}
-                  bold={mark === 'incorrect'}
-                >
-                  {display}
-                </Text>
-              );
-            })}
-            {isCursorOnNewline && active ? (
-              <Text inverse color="gray">{' '}</Text>
-            ) : null}
-            {isCursorAtEnd && active ? (
-              <Text inverse color="gray">{' '}</Text>
-            ) : null}
-          </Text>
+          <Text key={lineIdx}>{content.length > 0 ? content : ' '}</Text>
         );
       })}
     </Box>
