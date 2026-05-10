@@ -4,6 +4,8 @@ export interface TypingState {
   target: string;
   cursor: number;
   marks: Mark[];
+  startedAt: number | null;
+  completedAt: number | null;
 }
 
 export function createTypingState(target: string): TypingState {
@@ -11,6 +13,8 @@ export function createTypingState(target: string): TypingState {
     target,
     cursor: 0,
     marks: new Array(target.length).fill(null),
+    startedAt: null,
+    completedAt: null,
   };
 }
 
@@ -23,14 +27,18 @@ export function typeChar(state: TypingState, char: string): TypingState {
   const marks = state.marks.slice();
   marks[state.cursor] = mark;
 
-  return { ...state, marks, cursor: state.cursor + 1 };
+  const nextCursor = state.cursor + 1;
+  const startedAt = state.startedAt ?? Date.now();
+  const completedAt = nextCursor >= state.target.length ? Date.now() : state.completedAt;
+
+  return { ...state, marks, cursor: nextCursor, startedAt, completedAt };
 }
 
 export function backspace(state: TypingState): TypingState {
   if (state.cursor === 0) return state;
   const marks = state.marks.slice();
   marks[state.cursor - 1] = null;
-  return { ...state, marks, cursor: state.cursor - 1 };
+  return { ...state, marks, cursor: state.cursor - 1, completedAt: null };
 }
 
 export function isComplete(state: TypingState): boolean {

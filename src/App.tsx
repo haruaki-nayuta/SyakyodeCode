@@ -7,6 +7,7 @@ import { LanguagePicker, getLanguageLabel } from './components/LanguagePicker.js
 import { ProviderPicker } from './components/ProviderPicker.js';
 import { ApiKeyInput } from './components/ApiKeyInput.js';
 import { ModelPicker } from './components/ModelPicker.js';
+import { StatsView } from './components/StatsView.js';
 import {
   TypingState,
   backspace,
@@ -19,6 +20,7 @@ import { generateSnippet, getModelInfo } from './lib/llm.js';
 import { loadSettings, saveSettings } from './lib/settings.js';
 import { Provider, findProvider, getDefaultProvider } from './lib/providers.js';
 import { getApiKey, setApiKey } from './lib/auth.js';
+import { appendRecord, buildRecord } from './lib/stats.js';
 
 type Mode =
   | 'input'
@@ -27,7 +29,8 @@ type Mode =
   | 'language-picker'
   | 'provider-picker'
   | 'api-key-input'
-  | 'model-picker';
+  | 'model-picker'
+  | 'stats';
 
 interface SlashCommand {
   name: string;
@@ -43,6 +46,7 @@ interface SlashCommandMatch {
 const COMMANDS: SlashCommand[] = [
   { name: '/model', description: 'プロバイダーとモデルを選択する' },
   { name: '/language', description: 'プログラミング言語を設定する' },
+  { name: '/stats', description: '統計サマリを表示する' },
   { name: '/quit', aliases: ['/exit'], description: '終了する' },
 ];
 
@@ -94,14 +98,33 @@ export const App: React.FC = () => {
   }, [slashMatches]);
 
   const abortRef = useRef<AbortController | null>(null);
+  const recordedRef = useRef<TypingState | null>(null);
 
   const completed = typing ? isComplete(typing) : false;
 
   useEffect(() => {
-    if (mode === 'typing' && completed) {
+    if (mode === 'typing' && completed && typing && recordedRef.current !== typing) {
+      recordedRef.current = typing;
+      const p = progress(typing);
+      const startedAt = typing.startedAt;
+      const completedAt = typing.completedAt ?? Date.now();
+      const durationMs = startedAt ? Math.max(0, completedAt - startedAt) : 0;
+      const info = getModelInfo();
+      const record = buildRecord({
+        language,
+        providerId: info.providerId,
+        providerName: info.providerName,
+        model: info.model,
+        totalChars: p.total,
+        typed: p.typed,
+        correct: p.correct,
+        mistakes: p.mistakes,
+        durationMs,
+      });
+      appendRecord(record);
       setInfo('完了です ✓  Enterでホームに戻る');
     }
-  }, [mode, completed]);
+  }, [mode, completed, typing, language]);
 
   const startGeneration = async (prompt: string) => {
     setError(null);
@@ -145,7 +168,8 @@ export const App: React.FC = () => {
         mode === 'language-picker' ||
         mode === 'provider-picker' ||
         mode === 'api-key-input' ||
-        mode === 'model-picker'
+        mode === 'model-picker' ||
+        mode === 'stats'
       ) {
         return;
       }
@@ -290,6 +314,8 @@ export const App: React.FC = () => {
                   } else if (picked.command.name === '/model') {
                     setStagedProvider(activeProvider);
                     setMode('provider-picker');
+                  } else if (picked.command.name === '/stats') {
+                    setMode('stats');
                   } else if (picked.command.name === '/quit') {
                     exit();
                   }
@@ -379,6 +405,12 @@ export const App: React.FC = () => {
         </Box>
       )}
 
+      {mode === 'stats' && (
+        <Box marginTop={1}>
+          <StatsView onClose={() => setMode('input')} />
+        </Box>
+      )}
+
       {mode === 'loading' && (
         <Box marginTop={1}>
           <Text color="yellow">
@@ -444,13 +476,15 @@ const Header: React.FC<{
               ? 'API KEY'
               : mode === 'model-picker'
                 ? 'MODEL'
-                : 'TYPING';
+                : mode === 'stats'
+                  ? 'STATS'
+                  : 'TYPING';
   const color =
     mode === 'input'
       ? 'cyan'
       : mode === 'loading'
         ? 'yellow'
-        : mode === 'language-picker' || mode === 'provider-picker' || mode === 'model-picker' || mode === 'api-key-input'
+        : mode === 'language-picker' || mode === 'provider-picker' || mode === 'model-picker' || mode === 'api-key-input' || mode === 'stats'
           ? 'cyan'
           : 'magenta';
   return (
