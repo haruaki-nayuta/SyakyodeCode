@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useApp, useInput, useStdin } from 'ink';
 import Spinner from 'ink-spinner';
 import { PromptInput } from './components/PromptInput.js';
 import { TypingView } from './components/TypingView.js';
@@ -22,6 +22,12 @@ import { loadSettings, saveSettings } from './lib/settings.js';
 import { Provider, findProvider, getDefaultProvider } from './lib/providers.js';
 import { getApiKey, setApiKey } from './lib/auth.js';
 import { appendRecord, buildRecord } from './lib/stats.js';
+import {
+  SyakyodeScope,
+  appendLine as appendSyakyodeLine,
+  getPath as getSyakyodePath,
+  openInEditor as openSyakyodeEditor,
+} from './lib/projectPrompt.js';
 
 type Mode =
   | 'input'
@@ -33,7 +39,8 @@ type Mode =
   | 'model-picker'
   | 'stats'
   | 'auto-picker'
-  | 'explanation-picker';
+  | 'explanation-picker'
+  | 'syakyode-md-picker';
 
 interface SlashCommand {
   name: string;
@@ -52,6 +59,7 @@ const COMMANDS: SlashCommand[] = [
   { name: '/auto', description: 'auto モード（完了後に関連お題を自動生成）の有効/無効を選択する' },
   { name: '/explanation', description: '日本語の解説表示の有効/無効を選択する' },
   { name: '/stats', description: '統計サマリを表示する' },
+  { name: '/syakyode-md', description: 'Syakyode.md（追加ルール）をエディタで編集する' },
   { name: '/quit', aliases: ['/exit'], description: '終了する' },
 ];
 
@@ -71,6 +79,7 @@ function filterCommands(input: string): SlashCommandMatch[] {
 
 export const App: React.FC = () => {
   const { exit } = useApp();
+  const { stdin, setRawMode, isRawModeSupported } = useStdin();
   const [mode, setMode] = useState<Mode>('input');
   const [promptValue, setPromptValue] = useState('');
   const [typing, setTyping] = useState<TypingState | null>(null);
@@ -274,7 +283,8 @@ export const App: React.FC = () => {
         mode === 'model-picker' ||
         mode === 'stats' ||
         mode === 'auto-picker' ||
-        mode === 'explanation-picker'
+        mode === 'explanation-picker' ||
+        mode === 'syakyode-md-picker'
       ) {
         return;
       }
@@ -373,6 +383,35 @@ export const App: React.FC = () => {
     { isActive: true },
   );
 
+  const handleSyakyodeMdEdit = (scope: SyakyodeScope) => {
+    const targetPath = getSyakyodePath(scope);
+    const wasRaw = isRawModeSupported;
+    if (wasRaw) {
+      try {
+        setRawMode(false);
+      } catch {}
+      try {
+        stdin.pause();
+      } catch {}
+    }
+    const result = openSyakyodeEditor(scope);
+    if (wasRaw) {
+      try {
+        stdin.resume();
+      } catch {}
+      try {
+        setRawMode(true);
+      } catch {}
+    }
+    setMode('input');
+    if (result.ok) {
+      setError(null);
+      setInfo(`Syakyode.md を保存しました: ${targetPath}`);
+    } else {
+      setError(`エディタ起動に失敗: ${result.message ?? '不明なエラー'} (${targetPath})`);
+    }
+  };
+
   const handleProviderSelect = (provider: Provider) => {
     setStagedProvider(provider);
     if (provider.requiresApiKey && !getApiKey(provider.id)) {
@@ -443,8 +482,26 @@ export const App: React.FC = () => {
                     setMode('explanation-picker');
                   } else if (picked.command.name === '/stats') {
                     setMode('stats');
+                  } else if (picked.command.name === '/syakyode-md') {
+                    setMode('syakyode-md-picker');
                   } else if (picked.command.name === '/quit') {
                     exit();
+                  }
+                  return;
+                }
+                if (trimmed.startsWith('#')) {
+                  const line = trimmed.slice(1).trim();
+                  if (!line) {
+                    setError('# の後に追記したい内容を書いてください');
+                    return;
+                  }
+                  try {
+                    appendSyakyodeLine('project', line);
+                    setError(null);
+                    setInfo(`プロジェクト Syakyode.md に追記しました: ${getSyakyodePath('project')}`);
+                    setPromptValue('');
+                  } catch (e: any) {
+                    setError(`Syakyode.md への追記に失敗: ${e?.message ?? String(e)}`);
                   }
                   return;
                 }
@@ -576,6 +633,29 @@ export const App: React.FC = () => {
         </Box>
       )}
 
+      {mode === 'syakyode-md-picker' && (
+        <Box marginTop={1}>
+          <BoolPicker
+            title="Syakyode.md をどちらで編集する？"
+            current={false}
+            options={[
+              {
+                value: false,
+                label: 'プロジェクト',
+                description: getSyakyodePath('project'),
+              },
+              {
+                value: true,
+                label: 'グローバル',
+                description: getSyakyodePath('global'),
+              },
+            ]}
+            onSelect={(isGlobal) => handleSyakyodeMdEdit(isGlobal ? 'global' : 'project')}
+            onCancel={() => setMode('input')}
+          />
+        </Box>
+      )}
+
       {mode === 'loading' && (
         <Box marginTop={1}>
           <Text color="yellow">
@@ -676,7 +756,9 @@ const Header: React.FC<{
                     ? 'AUTO'
                     : mode === 'explanation-picker'
                       ? 'EXPLANATION'
-                      : 'TYPING';
+                      : mode === 'syakyode-md-picker'
+                        ? 'SYAKYODE.MD'
+                        : 'TYPING';
   const color =
     mode === 'input'
       ? 'cyan'
@@ -688,7 +770,8 @@ const Header: React.FC<{
             mode === 'api-key-input' ||
             mode === 'stats' ||
             mode === 'auto-picker' ||
-            mode === 'explanation-picker'
+            mode === 'explanation-picker' ||
+            mode === 'syakyode-md-picker'
           ? 'cyan'
           : 'magenta';
   return (

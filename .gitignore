@@ -6,3 +6,5 @@ dist/
 .env.local
 .idea/
 .vscode/
+Syakyode.md
+*.swp

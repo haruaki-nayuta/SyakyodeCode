@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { Provider, findProvider, getDefaultProvider } from './providers.js';
 import { getApiKey } from './auth.js';
 import { loadSettings } from './settings.js';
+import { loadAddendum } from './projectPrompt.js';
 
 const SYSTEM_PROMPT = `あなたは「写経 (programming transcription practice)」用のサンプルコードを生成するアシスタントです。
 ユーザーから渡される問題文や学習トピックに対して、写経しやすい短いコードスニペット**だけ**を出力してください。
@@ -105,6 +106,7 @@ export async function generateSnippet({
   let systemContent = SYSTEM_PROMPT;
   if (previous) systemContent += RELATED_SYSTEM_NOTE;
   if (withExplanation) systemContent += EXPLANATION_FORMAT_NOTE;
+  systemContent += loadAddendum();
   const userContent = buildUserContent({ prompt, language, previous });
 
   const response = await client.chat.completions.create(
@@ -273,7 +275,10 @@ export async function chatAboutSnippet({
   }
 
   const systemContent =
-    SNIPPET_CHAT_SYSTEM + '\n\n--- 学習中のスニペット ---\n' + contextLines.join('\n');
+    SNIPPET_CHAT_SYSTEM +
+    loadAddendum() +
+    '\n\n--- 学習中のスニペット ---\n' +
+    contextLines.join('\n');
 
   const messages = [
     { role: 'system' as const, content: systemContent },
