@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "description": "TUI for programming transcription practice (写経) powered by LM Studio",
+  "license": "MIT",
   "bin": {
     "syakyode": "./dist/cli.js"
   },
