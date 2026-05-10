@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import { PromptInput } from './components/PromptInput.js';
@@ -79,6 +79,19 @@ export const App: React.FC = () => {
   const bump = () => setRefresh((r) => r + 1);
 
   const [stagedProvider, setStagedProvider] = useState<Provider | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
+
+  const slashMatches = useMemo(
+    () => (promptValue.startsWith('/') ? filterCommands(promptValue) : []),
+    [promptValue],
+  );
+
+  useEffect(() => {
+    setSlashIndex((i) => {
+      if (slashMatches.length === 0) return 0;
+      return Math.min(i, slashMatches.length - 1);
+    });
+  }, [slashMatches]);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -151,6 +164,16 @@ export const App: React.FC = () => {
             setInfo(null);
           }
           return;
+        }
+        if (slashMatches.length > 0) {
+          if (key.upArrow || (key.ctrl && input === 'p')) {
+            setSlashIndex((i) => (i - 1 + slashMatches.length) % slashMatches.length);
+            return;
+          }
+          if (key.downArrow || (key.ctrl && input === 'n')) {
+            setSlashIndex((i) => (i + 1) % slashMatches.length);
+            return;
+          }
         }
         return;
       }
@@ -255,17 +278,19 @@ export const App: React.FC = () => {
                 const trimmed = v.trim();
                 if (!trimmed) return;
                 if (trimmed.startsWith('/')) {
-                  const top = filterCommands(trimmed)[0];
-                  if (!top) return;
+                  const matches = filterCommands(trimmed);
+                  const picked = matches[slashIndex] ?? matches[0];
+                  if (!picked) return;
                   setError(null);
                   setInfo(null);
                   setPromptValue('');
-                  if (top.command.name === '/language') {
+                  setSlashIndex(0);
+                  if (picked.command.name === '/language') {
                     setMode('language-picker');
-                  } else if (top.command.name === '/model') {
+                  } else if (picked.command.name === '/model') {
                     setStagedProvider(activeProvider);
                     setMode('provider-picker');
-                  } else if (top.command.name === '/quit') {
+                  } else if (picked.command.name === '/quit') {
                     exit();
                   }
                   return;
@@ -276,7 +301,7 @@ export const App: React.FC = () => {
             />
           </Box>
           {promptValue.startsWith('/') && (
-            <SlashCommandPalette query={promptValue} />
+            <SlashCommandPalette query={promptValue} selectedIndex={slashIndex} />
           )}
           {typing && (
             <Text color="gray">Esc: 写経画面に戻る</Text>
@@ -445,7 +470,10 @@ const Header: React.FC<{
   );
 };
 
-const SlashCommandPalette: React.FC<{ query: string }> = ({ query }) => {
+const SlashCommandPalette: React.FC<{ query: string; selectedIndex: number }> = ({
+  query,
+  selectedIndex,
+}) => {
   const matches = filterCommands(query);
   if (matches.length === 0) {
     return (
@@ -454,14 +482,16 @@ const SlashCommandPalette: React.FC<{ query: string }> = ({ query }) => {
       </Box>
     );
   }
+  const idx = Math.max(0, Math.min(selectedIndex, matches.length - 1));
   return (
     <Box flexDirection="column" marginTop={0}>
       {matches.map((m, i) => {
         const isAlias = m.displayName !== m.command.name;
+        const selected = i === idx;
         return (
           <Box key={`${m.command.name}:${m.displayName}`}>
-            <Text color={i === 0 ? 'cyan' : 'gray'} bold={i === 0}>
-              {i === 0 ? '▶ ' : '  '}
+            <Text color={selected ? 'cyan' : 'gray'} bold={selected}>
+              {selected ? '▶ ' : '  '}
               {m.displayName}
             </Text>
             <Text color="gray">
