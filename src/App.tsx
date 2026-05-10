@@ -33,7 +33,8 @@ type Mode =
   | 'model-picker'
   | 'stats'
   | 'auto-picker'
-  | 'explanation-picker';
+  | 'explanation-picker'
+  | 'auto-indent-picker';
 
 interface SlashCommand {
   name: string;
@@ -51,6 +52,7 @@ const COMMANDS: SlashCommand[] = [
   { name: '/language', description: 'プログラミング言語を設定する' },
   { name: '/auto', description: 'auto モード（完了後に関連お題を自動生成）の有効/無効を選択する' },
   { name: '/explanation', description: '日本語の解説表示の有効/無効を選択する' },
+  { name: '/auto-indent', description: '改行時に自動でインデントを入力する有効/無効を選択する' },
   { name: '/stats', description: '統計サマリを表示する' },
   { name: '/quit', aliases: ['/exit'], description: '終了する' },
 ];
@@ -87,6 +89,9 @@ export const App: React.FC = () => {
   const [explanation, setExplanationState] = useState<boolean>(
     () => loadSettings().explanation ?? true,
   );
+  const [autoIndent, setAutoIndentState] = useState<boolean>(
+    () => loadSettings().autoIndent ?? true,
+  );
   const [explanationText, setExplanationText] = useState<string | null>(null);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
   const [chatHistory, setChatHistory] = useState<SnippetChatMessage[]>([]);
@@ -104,6 +109,11 @@ export const App: React.FC = () => {
   const setExplanation = (next: boolean) => {
     setExplanationState(next);
     saveSettings({ ...loadSettings(), explanation: next });
+  };
+
+  const setAutoIndent = (next: boolean) => {
+    setAutoIndentState(next);
+    saveSettings({ ...loadSettings(), autoIndent: next });
   };
   // re-render trigger when auth/settings change
   const [, setRefresh] = useState(0);
@@ -274,7 +284,8 @@ export const App: React.FC = () => {
         mode === 'model-picker' ||
         mode === 'stats' ||
         mode === 'auto-picker' ||
-        mode === 'explanation-picker'
+        mode === 'explanation-picker' ||
+        mode === 'auto-indent-picker'
       ) {
         return;
       }
@@ -346,7 +357,19 @@ export const App: React.FC = () => {
       }
 
       if (key.return) {
-        setTyping((s) => (s ? typeChar(s, '\n') : s));
+        setTyping((s) => {
+          if (!s) return s;
+          const wasNewlineExpected = s.target[s.cursor] === '\n';
+          let next = typeChar(s, '\n');
+          if (autoIndent && wasNewlineExpected) {
+            while (next.cursor < next.target.length) {
+              const ch = next.target[next.cursor];
+              if (ch !== ' ' && ch !== '\t') break;
+              next = typeChar(next, ch);
+            }
+          }
+          return next;
+        });
         return;
       }
 
@@ -411,6 +434,7 @@ export const App: React.FC = () => {
         language={language}
         auto={auto}
         explanation={explanation}
+        autoIndent={autoIndent}
       />
 
       {mode === 'input' && (
@@ -441,6 +465,8 @@ export const App: React.FC = () => {
                     setMode('auto-picker');
                   } else if (picked.command.name === '/explanation') {
                     setMode('explanation-picker');
+                  } else if (picked.command.name === '/auto-indent') {
+                    setMode('auto-indent-picker');
                   } else if (picked.command.name === '/stats') {
                     setMode('stats');
                   } else if (picked.command.name === '/quit') {
@@ -576,6 +602,25 @@ export const App: React.FC = () => {
         </Box>
       )}
 
+      {mode === 'auto-indent-picker' && (
+        <Box marginTop={1}>
+          <BoolPicker
+            title="自動インデント入力を選択"
+            current={autoIndent}
+            options={[
+              { value: true, label: 'ON', description: '改行時にお題のインデント空白を自動入力' },
+              { value: false, label: 'OFF', description: '改行のみで、インデントは手動入力' },
+            ]}
+            onSelect={(v) => {
+              setAutoIndent(v);
+              setInfo(`自動インデント: ${v ? 'ON' : 'OFF'}`);
+              setMode('input');
+            }}
+            onCancel={() => setMode('input')}
+          />
+        </Box>
+      )}
+
       {mode === 'loading' && (
         <Box marginTop={1}>
           <Text color="yellow">
@@ -656,7 +701,8 @@ const Header: React.FC<{
   language: string;
   auto: boolean;
   explanation: boolean;
-}> = ({ model, providerName, mode, language, auto, explanation }) => {
+  autoIndent: boolean;
+}> = ({ model, providerName, mode, language, auto, explanation, autoIndent }) => {
   const label =
     mode === 'input'
       ? 'HOME'
@@ -676,7 +722,9 @@ const Header: React.FC<{
                     ? 'AUTO'
                     : mode === 'explanation-picker'
                       ? 'EXPLANATION'
-                      : 'TYPING';
+                      : mode === 'auto-indent-picker'
+                        ? 'AUTO-INDENT'
+                        : 'TYPING';
   const color =
     mode === 'input'
       ? 'cyan'
@@ -688,7 +736,8 @@ const Header: React.FC<{
             mode === 'api-key-input' ||
             mode === 'stats' ||
             mode === 'auto-picker' ||
-            mode === 'explanation-picker'
+            mode === 'explanation-picker' ||
+            mode === 'auto-indent-picker'
           ? 'cyan'
           : 'magenta';
   return (
@@ -711,6 +760,10 @@ const Header: React.FC<{
       <Text color="gray"> · explanation: </Text>
       <Text color={explanation ? 'green' : 'gray'} bold={explanation}>
         {explanation ? 'ON' : 'OFF'}
+      </Text>
+      <Text color="gray"> · indent: </Text>
+      <Text color={autoIndent ? 'green' : 'gray'} bold={autoIndent}>
+        {autoIndent ? 'ON' : 'OFF'}
       </Text>
     </Box>
   );

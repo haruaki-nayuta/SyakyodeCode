@@ -8,6 +8,7 @@ export interface Settings {
   model?: string;
   auto?: boolean;
   explanation?: boolean;
+  autoIndent?: boolean;
 }
 
 function getSettingsPath(): string {
