@@ -35,16 +35,15 @@ function splitLines(target: string): LineRow[] {
 
 const ESC = '\x1b';
 const RESET = `${ESC}[0m`;
+const INVERSE = `${ESC}[7m`;
 const BOLD = `${ESC}[1m`;
 const FG_GREEN = `${ESC}[32m`;
 const FG_RED = `${ESC}[31m`;
 const FG_GRAY = `${ESC}[90m`;
-const BG_GRAY = `${ESC}[100m`;
-const CURSOR = `${BG_GRAY}${ESC}[39m`;
 
 function styleChar(char: string, mark: Mark, isCursor: boolean): string {
   if (isCursor) {
-    return `${CURSOR}${char}${RESET}`;
+    return `${INVERSE}${char}${RESET}`;
   }
   if (mark === 'correct') {
     return `${FG_GREEN}${char}${RESET}`;
@@ -68,7 +67,7 @@ function buildLineString(
     out += styleChar(cell.char, mark, isCursor);
   }
   if (appendCursorBlock) {
-    out += `${BG_GRAY} ${RESET}`;
+    out += `${INVERSE} ${RESET}`;
   }
   return out;
 }
