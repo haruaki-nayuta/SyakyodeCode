@@ -34,10 +34,7 @@ export function backspace(state: TypingState): TypingState {
 }
 
 export function isComplete(state: TypingState): boolean {
-  return (
-    state.cursor === state.target.length &&
-    state.marks.every((m) => m === 'correct')
-  );
+  return state.cursor >= state.target.length;
 }
 
 export function progress(state: TypingState): { typed: number; total: number; correct: number; mistakes: number } {
