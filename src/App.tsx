@@ -1,9 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import { PromptInput } from './components/PromptInput.js';
 import { TypingView } from './components/TypingView.js';
 import { LanguagePicker, getLanguageLabel } from './components/LanguagePicker.js';
+import { ProviderPicker } from './components/ProviderPicker.js';
+import { ApiKeyInput } from './components/ApiKeyInput.js';
+import { ModelPicker } from './components/ModelPicker.js';
 import {
   TypingState,
   backspace,
@@ -14,8 +17,17 @@ import {
 } from './typing/state.js';
 import { generateSnippet, getModelInfo } from './lib/llm.js';
 import { loadSettings, saveSettings } from './lib/settings.js';
+import { Provider, findProvider, getDefaultProvider } from './lib/providers.js';
+import { getApiKey, setApiKey } from './lib/auth.js';
 
-type Mode = 'input' | 'loading' | 'typing' | 'language-picker';
+type Mode =
+  | 'input'
+  | 'loading'
+  | 'typing'
+  | 'language-picker'
+  | 'provider-picker'
+  | 'api-key-input'
+  | 'model-picker';
 
 interface SlashCommand {
   name: string;
@@ -29,6 +41,7 @@ interface SlashCommandMatch {
 }
 
 const COMMANDS: SlashCommand[] = [
+  { name: '/model', description: 'プロバイダーとモデルを選択する' },
   { name: '/language', description: 'プログラミング言語を設定する' },
   { name: '/quit', aliases: ['/exit'], description: '終了する' },
 ];
@@ -55,8 +68,19 @@ export const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [language, setLanguage] = useState<string>(() => loadSettings().language ?? 'auto');
+  const [activeProvider, setActiveProvider] = useState<Provider>(
+    () => findProvider(loadSettings().providerId) ?? getDefaultProvider(),
+  );
+  const [activeModel, setActiveModel] = useState<string>(
+    () => loadSettings().model ?? getDefaultProvider().defaultModel ?? '',
+  );
+  // re-render trigger when auth/settings change
+  const [, setRefresh] = useState(0);
+  const bump = () => setRefresh((r) => r + 1);
+
+  const [stagedProvider, setStagedProvider] = useState<Provider | null>(null);
+
   const abortRef = useRef<AbortController | null>(null);
-  const modelInfo = useMemo(() => getModelInfo(), []);
 
   const completed = typing ? isComplete(typing) : false;
 
@@ -92,6 +116,11 @@ export const App: React.FC = () => {
     }
   };
 
+  const persistProviderModel = (providerId: string, model: string) => {
+    const next = { ...loadSettings(), providerId, model };
+    saveSettings(next);
+  };
+
   useInput(
     (input, key) => {
       if (key.ctrl && (input === 'c' || input === 'd')) {
@@ -99,7 +128,12 @@ export const App: React.FC = () => {
         return;
       }
 
-      if (mode === 'language-picker') {
+      if (
+        mode === 'language-picker' ||
+        mode === 'provider-picker' ||
+        mode === 'api-key-input' ||
+        mode === 'model-picker'
+      ) {
         return;
       }
 
@@ -121,7 +155,6 @@ export const App: React.FC = () => {
         return;
       }
 
-      // mode === 'typing'
       if (key.escape) {
         setMode('input');
         setInfo(null);
@@ -172,9 +205,43 @@ export const App: React.FC = () => {
     { isActive: true },
   );
 
+  const handleProviderSelect = (provider: Provider) => {
+    setStagedProvider(provider);
+    if (provider.requiresApiKey && !getApiKey(provider.id)) {
+      setMode('api-key-input');
+    } else {
+      setMode('model-picker');
+    }
+  };
+
+  const handleApiKeySubmit = (key: string) => {
+    if (!stagedProvider) return;
+    setApiKey(stagedProvider.id, key);
+    setInfo(`${stagedProvider.name} のAPIキーを保存しました`);
+    bump();
+    setMode('model-picker');
+  };
+
+  const handleModelSelect = (modelId: string) => {
+    if (!stagedProvider) return;
+    persistProviderModel(stagedProvider.id, modelId);
+    setActiveProvider(stagedProvider);
+    setActiveModel(modelId);
+    setInfo(`${stagedProvider.name} / ${modelId} を選択しました`);
+    setStagedProvider(null);
+    setMode('input');
+  };
+
+  const modelInfo = getModelInfo();
+
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Header model={modelInfo.model} mode={mode} language={language} />
+      <Header
+        model={modelInfo.model}
+        providerName={modelInfo.providerName}
+        mode={mode}
+        language={language}
+      />
 
       {mode === 'input' && (
         <Box flexDirection="column" marginTop={1}>
@@ -195,6 +262,9 @@ export const App: React.FC = () => {
                   setPromptValue('');
                   if (top.command.name === '/language') {
                     setMode('language-picker');
+                  } else if (top.command.name === '/model') {
+                    setStagedProvider(activeProvider);
+                    setMode('provider-picker');
                   } else if (top.command.name === '/quit') {
                     exit();
                   }
@@ -245,12 +315,51 @@ export const App: React.FC = () => {
         </Box>
       )}
 
+      {mode === 'provider-picker' && (
+        <Box marginTop={1}>
+          <ProviderPicker
+            current={activeProvider.id}
+            onSelect={handleProviderSelect}
+            onCancel={() => {
+              setStagedProvider(null);
+              setMode('input');
+            }}
+            onChanged={bump}
+          />
+        </Box>
+      )}
+
+      {mode === 'api-key-input' && stagedProvider && (
+        <Box marginTop={1}>
+          <ApiKeyInput
+            provider={stagedProvider}
+            onSubmit={handleApiKeySubmit}
+            onCancel={() => setMode('provider-picker')}
+          />
+        </Box>
+      )}
+
+      {mode === 'model-picker' && stagedProvider && (
+        <Box marginTop={1}>
+          <ModelPicker
+            provider={stagedProvider}
+            current={stagedProvider.id === activeProvider.id ? activeModel : undefined}
+            onSelect={handleModelSelect}
+            onCancel={() => {
+              setStagedProvider(null);
+              setMode('input');
+            }}
+            onBack={() => setMode('provider-picker')}
+          />
+        </Box>
+      )}
+
       {mode === 'loading' && (
         <Box marginTop={1}>
           <Text color="yellow">
             <Spinner type="dots" />
           </Text>
-          <Text> {modelInfo.model} で生成中... (Escでキャンセル)</Text>
+          <Text> {modelInfo.providerName} / {modelInfo.model} で生成中... (Escでキャンセル)</Text>
         </Box>
       )}
 
@@ -282,17 +391,21 @@ export const App: React.FC = () => {
       )}
 
       <Box marginTop={1}>
-        <Text color="gray" dimColor>LM Studio: {modelInfo.baseURL}</Text>
+        <Text color="gray" dimColor>
+          {modelInfo.providerName}: {modelInfo.baseURL}
+          {modelInfo.hasApiKey ? '' : '  (APIキー未設定)'}
+        </Text>
       </Box>
     </Box>
   );
 };
 
-const Header: React.FC<{ model: string; mode: Mode; language: string }> = ({
-  model,
-  mode,
-  language,
-}) => {
+const Header: React.FC<{
+  model: string;
+  providerName: string;
+  mode: Mode;
+  language: string;
+}> = ({ model, providerName, mode, language }) => {
   const label =
     mode === 'input'
       ? 'HOME'
@@ -300,13 +413,19 @@ const Header: React.FC<{ model: string; mode: Mode; language: string }> = ({
         ? 'GENERATING'
         : mode === 'language-picker'
           ? 'LANGUAGE'
-          : 'TYPING';
+          : mode === 'provider-picker'
+            ? 'PROVIDER'
+            : mode === 'api-key-input'
+              ? 'API KEY'
+              : mode === 'model-picker'
+                ? 'MODEL'
+                : 'TYPING';
   const color =
     mode === 'input'
       ? 'cyan'
       : mode === 'loading'
         ? 'yellow'
-        : mode === 'language-picker'
+        : mode === 'language-picker' || mode === 'provider-picker' || mode === 'model-picker' || mode === 'api-key-input'
           ? 'cyan'
           : 'magenta';
   return (
@@ -314,7 +433,9 @@ const Header: React.FC<{ model: string; mode: Mode; language: string }> = ({
       <Text bold color={color}>SyakyodeCode</Text>
       <Text color="gray"> · </Text>
       <Text color={color}>[{label}]</Text>
-      <Text color="gray"> · model: </Text>
+      <Text color="gray"> · </Text>
+      <Text>{providerName}</Text>
+      <Text color="gray"> / </Text>
       <Text>{model}</Text>
       <Text color="gray"> · lang: </Text>
       <Text color={language === 'auto' ? 'gray' : 'green'}>

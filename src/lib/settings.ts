@@ -4,6 +4,8 @@ import path from 'node:path';
 
 export interface Settings {
   language?: string;
+  providerId?: string;
+  model?: string;
 }
 
 function getSettingsPath(): string {
