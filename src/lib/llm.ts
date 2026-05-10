@@ -214,3 +214,88 @@ export function getModelInfo() {
     hasApiKey: cfg.hasApiKey,
   };
 }
+
+const SNIPPET_CHAT_SYSTEM = `あなたはプログラミング写経学習を支援するアシスタントです。
+ユーザーは写経用のコードスニペットと（任意で）日本語の解説を見ながら学習しています。
+そのコードや解説について日本語で質問されるので、簡潔・正確に答えてください。
+
+ルール:
+- 質問にだけ答える。前置きや過剰な定型句は避ける。
+- 引用するコード片は短くする。長いコードを丸ごと貼り直さない。
+- Markdownの見出しや太字、コードフェンスは使わず、素のテキストで答える。
+- 1〜5文程度の手短な回答を目安にする。`;
+
+export interface SnippetChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface SnippetChatOptions {
+  code: string;
+  explanation: string | null;
+  language?: string;
+  prompt?: string | null;
+  history: SnippetChatMessage[];
+  question: string;
+  signal?: AbortSignal;
+}
+
+export async function chatAboutSnippet({
+  code,
+  explanation,
+  language,
+  prompt,
+  history,
+  question,
+  signal,
+}: SnippetChatOptions): Promise<string> {
+  const { provider, model } = resolveActiveConfig();
+  if (!model) {
+    throw new Error('モデルが未設定です。/model から選択してください。');
+  }
+  const apiKey = getApiKey(provider.id) ?? readEnvApiKey(provider.id);
+  if (provider.requiresApiKey && !apiKey) {
+    throw new Error(`${provider.name} のAPIキーが未設定です。/model から登録してください。`);
+  }
+
+  const client = new OpenAI({
+    baseURL: provider.baseURL,
+    apiKey: apiKey ?? 'no-key',
+    defaultHeaders: provider.extraHeaders,
+  });
+
+  const contextLines: string[] = [];
+  if (language && language !== 'auto') contextLines.push(`言語: ${language}`);
+  if (prompt) contextLines.push(`お題: ${prompt}`);
+  contextLines.push('', 'コード:', code);
+  if (explanation) {
+    contextLines.push('', '解説:', explanation);
+  }
+
+  const systemContent =
+    SNIPPET_CHAT_SYSTEM + '\n\n--- 学習中のスニペット ---\n' + contextLines.join('\n');
+
+  const messages = [
+    { role: 'system' as const, content: systemContent },
+    ...history.map((m) => ({ role: m.role, content: m.content })),
+    { role: 'user' as const, content: question },
+  ];
+
+  const response = await client.chat.completions.create(
+    {
+      model,
+      messages,
+      temperature: 0.4,
+    },
+    { signal },
+  );
+
+  const choice = response.choices[0];
+  const raw = choice?.message?.content ?? '';
+  const text = stripThinkBlocks(raw).trim();
+  if (!text) {
+    const finish = choice?.finish_reason;
+    throw new Error(`LLMからの応答が空でした: finish_reason=${finish ?? 'unknown'}`);
+  }
+  return text;
+}
