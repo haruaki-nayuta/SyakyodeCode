@@ -41,6 +41,8 @@ const FG_GREEN = `${ESC}[32m`;
 const FG_RED = `${ESC}[31m`;
 const FG_GRAY = `${ESC}[90m`;
 
+const INCORRECT_SPACE_GLYPH = '␣';
+
 function styleChar(char: string, mark: Mark, isCursor: boolean): string {
   if (isCursor) {
     return `${INVERSE}${char}${RESET}`;
@@ -49,7 +51,8 @@ function styleChar(char: string, mark: Mark, isCursor: boolean): string {
     return `${FG_GREEN}${char}${RESET}`;
   }
   if (mark === 'incorrect') {
-    return `${BOLD}${FG_RED}${char}${RESET}`;
+    const display = char === ' ' ? INCORRECT_SPACE_GLYPH : char;
+    return `${BOLD}${FG_RED}${display}${RESET}`;
   }
   return `${FG_GRAY}${char}${RESET}`;
 }
