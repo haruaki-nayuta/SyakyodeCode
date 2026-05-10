@@ -43,6 +43,7 @@ interface SlashCommandMatch {
 const COMMANDS: SlashCommand[] = [
   { name: '/model', description: 'プロバイダーとモデルを選択する' },
   { name: '/language', description: 'プログラミング言語を設定する' },
+  { name: '/auto', description: 'auto モード（完了後に関連お題を自動生成）をトグルする' },
   { name: '/quit', aliases: ['/exit'], description: '終了する' },
 ];
 
@@ -74,6 +75,13 @@ export const App: React.FC = () => {
   const [activeModel, setActiveModel] = useState<string>(
     () => loadSettings().model ?? getDefaultProvider().defaultModel ?? '',
   );
+  const [auto, setAutoState] = useState<boolean>(() => loadSettings().auto ?? false);
+  const [lastPrompt, setLastPrompt] = useState<string | null>(null);
+
+  const setAuto = (next: boolean) => {
+    setAutoState(next);
+    saveSettings({ ...loadSettings(), auto: next });
+  };
   // re-render trigger when auth/settings change
   const [, setRefresh] = useState(0);
   const bump = () => setRefresh((r) => r + 1);
@@ -99,22 +107,35 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     if (mode === 'typing' && completed) {
-      setInfo('完了です ✓  Enterでホームに戻る');
+      setInfo(
+        auto
+          ? '完了です ✓  Enterで関連する次のお題を生成'
+          : '完了です ✓  Enterでホームに戻る',
+      );
     }
-  }, [mode, completed]);
+  }, [mode, completed, auto]);
 
-  const startGeneration = async (prompt: string) => {
+  const startGeneration = async (
+    prompt: string,
+    previous?: { prompt: string; code: string },
+  ) => {
     setError(null);
     setInfo(null);
     setMode('loading');
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const snippet = await generateSnippet({ prompt, language, signal: ctrl.signal });
+      const snippet = await generateSnippet({
+        prompt,
+        language,
+        signal: ctrl.signal,
+        previous,
+      });
       if (!snippet || snippet.trim().length === 0) {
         throw new Error('LLMからの出力が空でした');
       }
       setTyping(createTypingState(snippet));
+      if (prompt) setLastPrompt(prompt);
       setPromptValue('');
       setMode('typing');
     } catch (e: any) {
@@ -138,6 +159,14 @@ export const App: React.FC = () => {
     (input, key) => {
       if (key.ctrl && (input === 'c' || input === 'd')) {
         exit();
+        return;
+      }
+
+      if (key.shift && key.tab) {
+        const next = !auto;
+        setAuto(next);
+        setError(null);
+        setInfo(`auto モード: ${next ? 'ON' : 'OFF'}`);
         return;
       }
 
@@ -188,9 +217,20 @@ export const App: React.FC = () => {
 
       if (completed) {
         if (key.return) {
-          setTyping(null);
-          setInfo(null);
-          setMode('input');
+          if (auto && lastPrompt && typing) {
+            const previousCode = typing.target;
+            const previousPrompt = lastPrompt;
+            setTyping(null);
+            setInfo(null);
+            void startGeneration('', {
+              prompt: previousPrompt,
+              code: previousCode,
+            });
+          } else {
+            setTyping(null);
+            setInfo(null);
+            setMode('input');
+          }
         }
         return;
       }
@@ -264,6 +304,7 @@ export const App: React.FC = () => {
         providerName={modelInfo.providerName}
         mode={mode}
         language={language}
+        auto={auto}
       />
 
       {mode === 'input' && (
@@ -290,6 +331,10 @@ export const App: React.FC = () => {
                   } else if (picked.command.name === '/model') {
                     setStagedProvider(activeProvider);
                     setMode('provider-picker');
+                  } else if (picked.command.name === '/auto') {
+                    const next = !auto;
+                    setAuto(next);
+                    setInfo(`auto モード: ${next ? 'ON' : 'OFF'}`);
                   } else if (picked.command.name === '/quit') {
                     exit();
                   }
@@ -408,7 +453,9 @@ export const App: React.FC = () => {
           <Box marginTop={1}>
             <Text color="gray">
               {completed
-                ? 'Enter: ホームに戻る / Esc: ホームに戻る'
+                ? auto
+                  ? 'Enter: 関連する次のお題を生成 / Esc: ホームに戻る'
+                  : 'Enter: ホームに戻る / Esc: ホームに戻る'
                 : 'Esc: ホームに戻る / Backspace: 1文字戻る / Enter: 改行'}
             </Text>
           </Box>
@@ -430,7 +477,8 @@ const Header: React.FC<{
   providerName: string;
   mode: Mode;
   language: string;
-}> = ({ model, providerName, mode, language }) => {
+  auto: boolean;
+}> = ({ model, providerName, mode, language, auto }) => {
   const label =
     mode === 'input'
       ? 'HOME'
@@ -465,6 +513,10 @@ const Header: React.FC<{
       <Text color="gray"> · lang: </Text>
       <Text color={language === 'auto' ? 'gray' : 'green'}>
         {getLanguageLabel(language)}
+      </Text>
+      <Text color="gray"> · auto: </Text>
+      <Text color={auto ? 'green' : 'gray'} bold={auto}>
+        {auto ? 'ON' : 'OFF'}
       </Text>
     </Box>
   );
