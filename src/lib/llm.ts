@@ -41,13 +41,26 @@ function readEnvApiKey(providerId: string): string | undefined {
   return process.env[envKey];
 }
 
+export interface PreviousContext {
+  prompt: string;
+  code: string;
+}
+
 export interface GenerateOptions {
   prompt: string;
   language?: string;
   signal?: AbortSignal;
+  previous?: PreviousContext;
 }
 
-export async function generateSnippet({ prompt, language, signal }: GenerateOptions): Promise<string> {
+const RELATED_SYSTEM_NOTE = `
+
+追加指示（auto モード）:
+- ユーザーが直前に写経したお題とコードが提示されます。
+- 同じ言語・同じ難易度帯で、関連するが異なるトピックを 1 つだけ選び、その写経用コードを返してください。
+- 直前のコードと同じ内容や見た目をほぼ繰り返してはいけません。`;
+
+export async function generateSnippet({ prompt, language, signal, previous }: GenerateOptions): Promise<string> {
   const { provider, model } = resolveActiveConfig();
   if (!model) {
     throw new Error('モデルが未設定です。/model から選択してください。');
@@ -63,19 +76,17 @@ export async function generateSnippet({ prompt, language, signal }: GenerateOpti
     defaultHeaders: provider.extraHeaders,
   });
 
-  const userContent =
-    language && language !== 'auto'
-      ? `使用言語: ${language}\nお題: ${prompt}\n\n上記の言語で写経用コードを出力してください。`
-      : prompt;
+  const systemContent = previous ? `${SYSTEM_PROMPT}${RELATED_SYSTEM_NOTE}` : SYSTEM_PROMPT;
+  const userContent = buildUserContent({ prompt, language, previous });
 
   const response = await client.chat.completions.create(
     {
       model,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: systemContent },
         { role: 'user', content: userContent },
       ],
-      temperature: 0.4,
+      temperature: previous ? 0.6 : 0.4,
     },
     { signal },
   );
@@ -97,6 +108,28 @@ export async function generateSnippet({ prompt, language, signal }: GenerateOpti
         ? '思考過程のみ返り、本文が空でした (reasoning モデルの挙動)'
         : `finish_reason=${finish ?? 'unknown'}`;
   throw new Error(`LLMからの出力が空でした: ${detail}`);
+}
+
+function buildUserContent({
+  prompt,
+  language,
+  previous,
+}: {
+  prompt: string;
+  language?: string;
+  previous?: PreviousContext;
+}): string {
+  const langLine = language && language !== 'auto' ? `使用言語: ${language}\n` : '';
+  if (previous) {
+    return (
+      `${langLine}直前のお題: ${previous.prompt}\n\n` +
+      `直前のコード:\n${previous.code}\n\n` +
+      `上記と関連するが異なるトピックを 1 つ選び、同じ言語・同じ難易度帯で写経用コードを返してください。`
+    );
+  }
+  return langLine
+    ? `${langLine}お題: ${prompt}\n\n上記の言語で写経用コードを出力してください。`
+    : prompt;
 }
 
 function sanitize(raw: string): string {
