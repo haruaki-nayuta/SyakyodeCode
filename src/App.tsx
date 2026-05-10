@@ -8,6 +8,7 @@ import { ProviderPicker } from './components/ProviderPicker.js';
 import { ApiKeyInput } from './components/ApiKeyInput.js';
 import { ModelPicker } from './components/ModelPicker.js';
 import { StatsView } from './components/StatsView.js';
+import { BoolPicker } from './components/BoolPicker.js';
 import {
   TypingState,
   backspace,
@@ -30,7 +31,9 @@ type Mode =
   | 'provider-picker'
   | 'api-key-input'
   | 'model-picker'
-  | 'stats';
+  | 'stats'
+  | 'auto-picker'
+  | 'explanation-picker';
 
 interface SlashCommand {
   name: string;
@@ -46,7 +49,8 @@ interface SlashCommandMatch {
 const COMMANDS: SlashCommand[] = [
   { name: '/model', description: 'プロバイダーとモデルを選択する' },
   { name: '/language', description: 'プログラミング言語を設定する' },
-  { name: '/auto', description: 'auto モード（完了後に関連お題を自動生成）をトグルする' },
+  { name: '/auto', description: 'auto モード（完了後に関連お題を自動生成）の有効/無効を選択する' },
+  { name: '/explanation', description: '日本語の解説表示の有効/無効を選択する' },
   { name: '/stats', description: '統計サマリを表示する' },
   { name: '/quit', aliases: ['/exit'], description: '終了する' },
 ];
@@ -80,11 +84,20 @@ export const App: React.FC = () => {
     () => loadSettings().model ?? getDefaultProvider().defaultModel ?? '',
   );
   const [auto, setAutoState] = useState<boolean>(() => loadSettings().auto ?? false);
+  const [explanation, setExplanationState] = useState<boolean>(
+    () => loadSettings().explanation ?? true,
+  );
+  const [explanationText, setExplanationText] = useState<string | null>(null);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
 
   const setAuto = (next: boolean) => {
     setAutoState(next);
     saveSettings({ ...loadSettings(), auto: next });
+  };
+
+  const setExplanation = (next: boolean) => {
+    setExplanationState(next);
+    saveSettings({ ...loadSettings(), explanation: next });
   };
   // re-render trigger when auth/settings change
   const [, setRefresh] = useState(0);
@@ -150,16 +163,18 @@ export const App: React.FC = () => {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const snippet = await generateSnippet({
+      const result = await generateSnippet({
         prompt,
         language,
         signal: ctrl.signal,
         previous,
+        withExplanation: explanation,
       });
-      if (!snippet || snippet.trim().length === 0) {
+      if (!result.code || result.code.trim().length === 0) {
         throw new Error('LLMからの出力が空でした');
       }
-      setTyping(createTypingState(snippet));
+      setTyping(createTypingState(result.code));
+      setExplanationText(explanation ? result.explanation : null);
       if (prompt) setLastPrompt(prompt);
       setPromptValue('');
       setMode('typing');
@@ -200,7 +215,9 @@ export const App: React.FC = () => {
         mode === 'provider-picker' ||
         mode === 'api-key-input' ||
         mode === 'model-picker' ||
-        mode === 'stats'
+        mode === 'stats' ||
+        mode === 'auto-picker' ||
+        mode === 'explanation-picker'
       ) {
         return;
       }
@@ -331,6 +348,7 @@ export const App: React.FC = () => {
         mode={mode}
         language={language}
         auto={auto}
+        explanation={explanation}
       />
 
       {mode === 'input' && (
@@ -358,9 +376,9 @@ export const App: React.FC = () => {
                     setStagedProvider(activeProvider);
                     setMode('provider-picker');
                   } else if (picked.command.name === '/auto') {
-                    const next = !auto;
-                    setAuto(next);
-                    setInfo(`auto モード: ${next ? 'ON' : 'OFF'}`);
+                    setMode('auto-picker');
+                  } else if (picked.command.name === '/explanation') {
+                    setMode('explanation-picker');
                   } else if (picked.command.name === '/stats') {
                     setMode('stats');
                   } else if (picked.command.name === '/quit') {
@@ -458,6 +476,44 @@ export const App: React.FC = () => {
         </Box>
       )}
 
+      {mode === 'auto-picker' && (
+        <Box marginTop={1}>
+          <BoolPicker
+            title="auto モードを選択"
+            current={auto}
+            options={[
+              { value: true, label: 'ON', description: '完了後に関連お題を自動生成' },
+              { value: false, label: 'OFF', description: '完了後はホームに戻る' },
+            ]}
+            onSelect={(v) => {
+              setAuto(v);
+              setInfo(`auto モード: ${v ? 'ON' : 'OFF'}`);
+              setMode('input');
+            }}
+            onCancel={() => setMode('input')}
+          />
+        </Box>
+      )}
+
+      {mode === 'explanation-picker' && (
+        <Box marginTop={1}>
+          <BoolPicker
+            title="解説表示を選択"
+            current={explanation}
+            options={[
+              { value: true, label: 'ON', description: '写経枠の下に日本語の解説を表示' },
+              { value: false, label: 'OFF', description: 'コードのみ生成・表示' },
+            ]}
+            onSelect={(v) => {
+              setExplanation(v);
+              setInfo(`解説表示: ${v ? 'ON' : 'OFF'}`);
+              setMode('input');
+            }}
+            onCancel={() => setMode('input')}
+          />
+        </Box>
+      )}
+
       {mode === 'loading' && (
         <Box marginTop={1}>
           <Text color="yellow">
@@ -479,6 +535,18 @@ export const App: React.FC = () => {
           >
             <TypingView state={typing} active={!completed} />
           </Box>
+          {explanation && explanationText && (
+            <Box
+              borderStyle="round"
+              borderColor="gray"
+              paddingX={1}
+              flexDirection="column"
+              marginTop={1}
+            >
+              <Text color="gray" bold>解説</Text>
+              <Text>{explanationText}</Text>
+            </Box>
+          )}
           {info && (
             <Box marginTop={1}>
               <Text color="green">{info}</Text>
@@ -512,7 +580,8 @@ const Header: React.FC<{
   mode: Mode;
   language: string;
   auto: boolean;
-}> = ({ model, providerName, mode, language, auto }) => {
+  explanation: boolean;
+}> = ({ model, providerName, mode, language, auto, explanation }) => {
   const label =
     mode === 'input'
       ? 'HOME'
@@ -528,13 +597,23 @@ const Header: React.FC<{
                 ? 'MODEL'
                 : mode === 'stats'
                   ? 'STATS'
-                  : 'TYPING';
+                  : mode === 'auto-picker'
+                    ? 'AUTO'
+                    : mode === 'explanation-picker'
+                      ? 'EXPLANATION'
+                      : 'TYPING';
   const color =
     mode === 'input'
       ? 'cyan'
       : mode === 'loading'
         ? 'yellow'
-        : mode === 'language-picker' || mode === 'provider-picker' || mode === 'model-picker' || mode === 'api-key-input' || mode === 'stats'
+        : mode === 'language-picker' ||
+            mode === 'provider-picker' ||
+            mode === 'model-picker' ||
+            mode === 'api-key-input' ||
+            mode === 'stats' ||
+            mode === 'auto-picker' ||
+            mode === 'explanation-picker'
           ? 'cyan'
           : 'magenta';
   return (
@@ -553,6 +632,10 @@ const Header: React.FC<{
       <Text color="gray"> · auto: </Text>
       <Text color={auto ? 'green' : 'gray'} bold={auto}>
         {auto ? 'ON' : 'OFF'}
+      </Text>
+      <Text color="gray"> · explanation: </Text>
+      <Text color={explanation ? 'green' : 'gray'} bold={explanation}>
+        {explanation ? 'ON' : 'OFF'}
       </Text>
     </Box>
   );
