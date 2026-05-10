@@ -47,6 +47,7 @@ const COMMANDS: SlashCommand[] = [
   { name: '/model', description: 'プロバイダーとモデルを選択する' },
   { name: '/language', description: 'プログラミング言語を設定する' },
   { name: '/auto', description: 'auto モード（完了後に関連お題を自動生成）をトグルする' },
+  { name: '/explanation', description: '日本語の解説表示をトグルする' },
   { name: '/stats', description: '統計サマリを表示する' },
   { name: '/quit', aliases: ['/exit'], description: '終了する' },
 ];
@@ -80,11 +81,20 @@ export const App: React.FC = () => {
     () => loadSettings().model ?? getDefaultProvider().defaultModel ?? '',
   );
   const [auto, setAutoState] = useState<boolean>(() => loadSettings().auto ?? false);
+  const [explanation, setExplanationState] = useState<boolean>(
+    () => loadSettings().explanation ?? true,
+  );
+  const [explanationText, setExplanationText] = useState<string | null>(null);
   const [lastPrompt, setLastPrompt] = useState<string | null>(null);
 
   const setAuto = (next: boolean) => {
     setAutoState(next);
     saveSettings({ ...loadSettings(), auto: next });
+  };
+
+  const setExplanation = (next: boolean) => {
+    setExplanationState(next);
+    saveSettings({ ...loadSettings(), explanation: next });
   };
   // re-render trigger when auth/settings change
   const [, setRefresh] = useState(0);
@@ -150,16 +160,18 @@ export const App: React.FC = () => {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const snippet = await generateSnippet({
+      const result = await generateSnippet({
         prompt,
         language,
         signal: ctrl.signal,
         previous,
+        withExplanation: explanation,
       });
-      if (!snippet || snippet.trim().length === 0) {
+      if (!result.code || result.code.trim().length === 0) {
         throw new Error('LLMからの出力が空でした');
       }
-      setTyping(createTypingState(snippet));
+      setTyping(createTypingState(result.code));
+      setExplanationText(explanation ? result.explanation : null);
       if (prompt) setLastPrompt(prompt);
       setPromptValue('');
       setMode('typing');
@@ -331,6 +343,7 @@ export const App: React.FC = () => {
         mode={mode}
         language={language}
         auto={auto}
+        explanation={explanation}
       />
 
       {mode === 'input' && (
@@ -361,6 +374,10 @@ export const App: React.FC = () => {
                     const next = !auto;
                     setAuto(next);
                     setInfo(`auto モード: ${next ? 'ON' : 'OFF'}`);
+                  } else if (picked.command.name === '/explanation') {
+                    const next = !explanation;
+                    setExplanation(next);
+                    setInfo(`解説表示: ${next ? 'ON' : 'OFF'}`);
                   } else if (picked.command.name === '/stats') {
                     setMode('stats');
                   } else if (picked.command.name === '/quit') {
@@ -479,6 +496,18 @@ export const App: React.FC = () => {
           >
             <TypingView state={typing} active={!completed} />
           </Box>
+          {explanation && explanationText && (
+            <Box
+              borderStyle="round"
+              borderColor="gray"
+              paddingX={1}
+              flexDirection="column"
+              marginTop={1}
+            >
+              <Text color="gray" bold>解説</Text>
+              <Text>{explanationText}</Text>
+            </Box>
+          )}
           {info && (
             <Box marginTop={1}>
               <Text color="green">{info}</Text>
@@ -512,7 +541,8 @@ const Header: React.FC<{
   mode: Mode;
   language: string;
   auto: boolean;
-}> = ({ model, providerName, mode, language, auto }) => {
+  explanation: boolean;
+}> = ({ model, providerName, mode, language, auto, explanation }) => {
   const label =
     mode === 'input'
       ? 'HOME'
@@ -553,6 +583,10 @@ const Header: React.FC<{
       <Text color="gray"> · auto: </Text>
       <Text color={auto ? 'green' : 'gray'} bold={auto}>
         {auto ? 'ON' : 'OFF'}
+      </Text>
+      <Text color="gray"> · explanation: </Text>
+      <Text color={explanation ? 'green' : 'gray'} bold={explanation}>
+        {explanation ? 'ON' : 'OFF'}
       </Text>
     </Box>
   );

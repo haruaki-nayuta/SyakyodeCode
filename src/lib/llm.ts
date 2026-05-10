@@ -51,6 +51,7 @@ export interface GenerateOptions {
   language?: string;
   signal?: AbortSignal;
   previous?: PreviousContext;
+  withExplanation?: boolean;
 }
 
 const RELATED_SYSTEM_NOTE = `
@@ -60,7 +61,32 @@ const RELATED_SYSTEM_NOTE = `
 - 同じ言語・同じ難易度帯で、関連するが異なるトピックを 1 つだけ選び、その写経用コードを返してください。
 - 直前のコードと同じ内容や見た目をほぼ繰り返してはいけません。`;
 
-export async function generateSnippet({ prompt, language, signal, previous }: GenerateOptions): Promise<string> {
+const EXPLANATION_FORMAT_NOTE = `
+
+出力フォーマット（厳守）:
+- 以下の2つのタグで出力を区切ってください。タグ以外の前置き・後書きは禁止。
+- <CODE> と </CODE> の間には写経対象のコード本体のみを入れる。
+- <EXPLANATION> と </EXPLANATION> の間には日本語のコード解説を入れる。100〜300字を目安。短いコードならそれより短くてOK。
+
+<CODE>
+（ここに写経対象のコード本体）
+</CODE>
+<EXPLANATION>
+（ここに日本語の解説）
+</EXPLANATION>`;
+
+export interface GeneratedSnippet {
+  code: string;
+  explanation: string | null;
+}
+
+export async function generateSnippet({
+  prompt,
+  language,
+  signal,
+  previous,
+  withExplanation,
+}: GenerateOptions): Promise<GeneratedSnippet> {
   const { provider, model } = resolveActiveConfig();
   if (!model) {
     throw new Error('モデルが未設定です。/model から選択してください。');
@@ -76,7 +102,9 @@ export async function generateSnippet({ prompt, language, signal, previous }: Ge
     defaultHeaders: provider.extraHeaders,
   });
 
-  const systemContent = previous ? `${SYSTEM_PROMPT}${RELATED_SYSTEM_NOTE}` : SYSTEM_PROMPT;
+  let systemContent = SYSTEM_PROMPT;
+  if (previous) systemContent += RELATED_SYSTEM_NOTE;
+  if (withExplanation) systemContent += EXPLANATION_FORMAT_NOTE;
   const userContent = buildUserContent({ prompt, language, previous });
 
   const response = await client.chat.completions.create(
@@ -93,8 +121,8 @@ export async function generateSnippet({ prompt, language, signal, previous }: Ge
 
   const choice = response.choices[0];
   const raw = choice?.message?.content ?? '';
-  const cleaned = sanitize(raw);
-  if (cleaned.length > 0) return cleaned;
+  const parsed = parseResponse(raw);
+  if (parsed.code.length > 0) return parsed;
 
   const finish = choice?.finish_reason;
   const reasoning =
@@ -132,15 +160,16 @@ function buildUserContent({
     : prompt;
 }
 
-function sanitize(raw: string): string {
-  let text = raw;
-
+function stripThinkBlocks(text: string): string {
   // Strip reasoning-model think blocks that some providers embed in content
   // (DeepSeek-R1 / QwQ on direct endpoints; OpenRouter splits these out itself).
-  text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
-  text = text.replace(/<\|begin_of_thought\|>[\s\S]*?<\|end_of_thought\|>/gi, '');
+  let out = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  out = out.replace(/<\|begin_of_thought\|>[\s\S]*?<\|end_of_thought\|>/gi, '');
+  return out;
+}
 
-  text = text.trim();
+function normalizeCode(raw: string): string {
+  let text = raw.trim();
 
   const fenceMatch = text.match(/```[a-zA-Z0-9_+-]*\n([\s\S]*?)```/);
   if (fenceMatch) {
@@ -153,6 +182,26 @@ function sanitize(raw: string): string {
   text = text.replace(/\n{3,}/g, '\n\n');
 
   return text.trim();
+}
+
+function normalizeExplanation(raw: string): string {
+  return raw.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function parseResponse(raw: string): GeneratedSnippet {
+  const stripped = stripThinkBlocks(raw);
+
+  const codeMatch = stripped.match(/<CODE>\s*([\s\S]*?)\s*<\/CODE>/i);
+  const explMatch = stripped.match(/<EXPLANATION>\s*([\s\S]*?)\s*<\/EXPLANATION>/i);
+
+  if (codeMatch) {
+    const code = normalizeCode(codeMatch[1]);
+    const explanation = explMatch ? normalizeExplanation(explMatch[1]) : null;
+    return { code, explanation: explanation && explanation.length > 0 ? explanation : null };
+  }
+
+  // Fallback: no tags — treat the whole response as code.
+  return { code: normalizeCode(stripped), explanation: null };
 }
 
 export function getModelInfo() {

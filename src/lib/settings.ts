@@ -7,6 +7,7 @@ export interface Settings {
   providerId?: string;
   model?: string;
   auto?: boolean;
+  explanation?: boolean;
 }
 
 function getSettingsPath(): string {
