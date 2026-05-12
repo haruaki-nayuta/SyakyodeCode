@@ -118,6 +118,7 @@ export interface OverallSummary {
 export interface LanguageSummary {
   language: string;
   sessions: number;
+  totalChars: number;
   avgWpm: number;
   avgAccuracy: number;
 }
@@ -166,9 +167,11 @@ export function summarizeByLanguage(records: StatsRecord[]): LanguageSummary[] {
   for (const [language, list] of groups) {
     const wpmSum = list.reduce((s, r) => s + r.wpm, 0);
     const accSum = list.reduce((s, r) => s + r.accuracy, 0);
+    const totalChars = list.reduce((s, r) => s + r.totalChars, 0);
     out.push({
       language,
       sessions: list.length,
+      totalChars,
       avgWpm: wpmSum / list.length,
       avgAccuracy: accSum / list.length,
     });
