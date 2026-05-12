@@ -118,6 +118,7 @@ const LanguageTable: React.FC<{
         cells={[
           { text: '言語', width: 14 },
           { text: 'セッション', width: 11 },
+          { text: '打鍵数', width: 10 },
           { text: '平均 WPM', width: 10 },
           { text: '平均正解率', width: 10 },
         ]}
@@ -126,6 +127,7 @@ const LanguageTable: React.FC<{
         <Box key={r.language}>
           <Cell width={14}>{shortLang(r.language)}</Cell>
           <Cell width={11}>{`${r.sessions}`}</Cell>
+          <Cell width={10}>{`${r.totalChars}`}</Cell>
           <Cell width={10}>{r.avgWpm.toFixed(1)}</Cell>
           <Cell width={10}>{`${(r.avgAccuracy * 100).toFixed(1)}%`}</Cell>
         </Box>
