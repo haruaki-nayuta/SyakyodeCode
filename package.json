@@ -10,7 +10,8 @@
   "scripts": {
     "dev": "tsx src/cli.tsx",
     "build": "tsc",
-    "start": "node dist/cli.js"
+    "start": "node dist/cli.js",
+    "test": "tsx --test tests/typing/state.test.ts tests/lib/stats.test.ts tests/lib/settings.test.ts tests/lib/auth.test.ts tests/lib/providers.test.ts tests/lib/llm.test.ts"
   },
   "packageManager": "pnpm@10.0.0",
   "engines": {
