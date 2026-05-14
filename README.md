@@ -43,10 +43,13 @@ SyakyodeCode · [TYPING] · LM Studio (local) / openai/gpt-oss-20b · lang: Pyth
 
 ## インストール
 
+パッケージマネージャは [pnpm](https://pnpm.io/) を使用します（`corepack` で自動的に揃います）。
+
 ```bash
 git clone https://github.com/haruaki-nayuta/SyakyodeCode.git
 cd SyakyodeCode
-npm install
+corepack enable
+pnpm install
 ```
 
 ## 使い方
@@ -54,14 +57,14 @@ npm install
 開発モードで起動（推奨）:
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 ビルドして起動:
 
 ```bash
-npm run build
-npm start
+pnpm build
+pnpm start
 ```
 
 起動後、HOME 画面でお題を日本語で入力して Enter で生成が始まります。
@@ -140,10 +143,17 @@ API キーをファイルに残したくない場合は、環境変数 `SYAKYODE
 ## 開発
 
 ```bash
-npm run dev      # tsx で TUI を起動
-npm run build    # tsc でビルド（dist/ に出力）
-npm start        # ビルド済みバイナリを実行
+pnpm dev      # tsx で TUI を起動
+pnpm build    # tsc でビルド（dist/ に出力）
+pnpm start    # ビルド済みバイナリを実行
 ```
+
+### サプライチェーン対策
+
+- `packageManager` で pnpm のバージョンを固定（`corepack` 経由で再現性確保）
+- `.npmrc` の `minimum-release-age=4320`（= 3 日）で、公開直後の侵害バージョンが取り込まれるのを抑止
+- `package.json` の `pnpm.onlyBuiltDependencies` で postinstall を許可するパッケージを明示（許可リスト方式）
+- CI では必ず `pnpm install --frozen-lockfile` を使用し、`pnpm-lock.yaml` と一致しないインストールを失敗させる
 
 ディレクトリ構成:
 
