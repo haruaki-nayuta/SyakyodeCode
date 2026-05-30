@@ -41,6 +41,23 @@ function readEnvApiKey(providerId: string): string | undefined {
   return process.env[envKey];
 }
 
+function createChatClient(): { client: OpenAI; model: string } {
+  const { provider, model } = resolveActiveConfig();
+  if (!model) {
+    throw new Error('モデルが未設定です。/model から選択してください。');
+  }
+  const apiKey = getApiKey(provider.id) ?? readEnvApiKey(provider.id);
+  if (provider.requiresApiKey && !apiKey) {
+    throw new Error(`${provider.name} のAPIキーが未設定です。/model から登録してください。`);
+  }
+  const client = new OpenAI({
+    baseURL: provider.baseURL,
+    apiKey: apiKey ?? 'no-key',
+    defaultHeaders: provider.extraHeaders,
+  });
+  return { client, model };
+}
+
 export interface PreviousContext {
   prompt: string;
   code: string;
@@ -87,20 +104,7 @@ export async function generateSnippet({
   previous,
   withExplanation,
 }: GenerateOptions): Promise<GeneratedSnippet> {
-  const { provider, model } = resolveActiveConfig();
-  if (!model) {
-    throw new Error('モデルが未設定です。/model から選択してください。');
-  }
-  const apiKey = getApiKey(provider.id) ?? readEnvApiKey(provider.id);
-  if (provider.requiresApiKey && !apiKey) {
-    throw new Error(`${provider.name} のAPIキーが未設定です。/model から登録してください。`);
-  }
-
-  const client = new OpenAI({
-    baseURL: provider.baseURL,
-    apiKey: apiKey ?? 'no-key',
-    defaultHeaders: provider.extraHeaders,
-  });
+  const { client, model } = createChatClient();
 
   let systemContent = SYSTEM_PROMPT;
   if (previous) systemContent += RELATED_SYSTEM_NOTE;
@@ -249,20 +253,7 @@ export async function chatAboutSnippet({
   question,
   signal,
 }: SnippetChatOptions): Promise<string> {
-  const { provider, model } = resolveActiveConfig();
-  if (!model) {
-    throw new Error('モデルが未設定です。/model から選択してください。');
-  }
-  const apiKey = getApiKey(provider.id) ?? readEnvApiKey(provider.id);
-  if (provider.requiresApiKey && !apiKey) {
-    throw new Error(`${provider.name} のAPIキーが未設定です。/model から登録してください。`);
-  }
-
-  const client = new OpenAI({
-    baseURL: provider.baseURL,
-    apiKey: apiKey ?? 'no-key',
-    defaultHeaders: provider.extraHeaders,
-  });
+  const { client, model } = createChatClient();
 
   const contextLines: string[] = [];
   if (language && language !== 'auto') contextLines.push(`言語: ${language}`);
